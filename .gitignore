@@ -1,0 +1,108 @@
+﻿# ==========================================================
+# PYTHON
+# ==========================================================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# ==========================================================
+# ENTORNOS VIRTUALES
+# ==========================================================
+.venv/
+venv/
+env/
+
+# ==========================================================
+# CREDENCIALES
+# ==========================================================
+.env
+*.env
+.env.*
+!.env.example
+
+# ==========================================================
+# SESIONES DE NAVEGADOR
+# ==========================================================
+**/storage/
+**/sessions/
+**/*sesion*.json
+**/*session*.json
+**/*storage_state*.json
+
+# ==========================================================
+# DESCARGAS TEMPORALES
+# ==========================================================
+**/downloads/
+**/temporal_descargas/
+**/data/temporal_descargas/
+
+# ==========================================================
+# LOGS
+# ==========================================================
+**/logs/
+*.log
+
+# ==========================================================
+# RESULTADOS GENERADOS
+# ==========================================================
+GENERAL/*.html
+GENERAL/*.xlsx
+GENERAL/*.csv
+GENERAL/state/
+
+**/data/salida/
+**/reports/*.xlsx
+**/reports/*.html
+
+# ==========================================================
+# ARCHIVOS DE OFFICE
+# ==========================================================
+~$*.xlsx
+~$*.xls
+~$*.docx
+
+# ==========================================================
+# BACKUPS
+# ==========================================================
+*.backup*
+*_BACKUP_*/
+backup/
+backups/
+
+# ==========================================================
+# WINDOWS / IDE
+# ==========================================================
+Thumbs.db
+Desktop.ini
+.vscode/
+.idea/
+
+# ==========================================================
+# TEMPORALES
+# ==========================================================
+*.tmp
+*.temp
+
+# ==========================================================
+# SALIDAS GENERADAS POR LOS MONITORES
+# ==========================================================
+monitores/pasarelas/data/historico/*.xlsx
+monitores/pasarelas/data/salida/
+monitores/pasarelas/reportes/diario/*.html
+
+monitores/hercules/downloads/
+monitores/hercules/reports/*.xlsx
+monitores/hercules/reports/*.html
+
+monitores/aws/salida/*.xlsx
+monitores/aws/salida/*.html
+
+GENERAL/*.xlsx
+GENERAL/*.html
+GENERAL/*.csv
+GENERAL/state/
+
+# Mantener carpetas vacías cuando corresponda
+!**/.gitkeep
+
