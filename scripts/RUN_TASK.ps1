@@ -39,6 +39,16 @@ if ($Modo -eq "dia-anterior" -and $SoloSiNoEjecutadoHoy) {
 $args = @("$Root\run.py", "--monitor", $Monitor.ToLower(), "--modo", $Modo, "--corte", $Corte, "--hora-inicio", $HoraInicio, "--hora-fin", $HoraFin)
 if ($Fecha -and $Modo -eq "fecha") { $args += @("--fecha", $Fecha) }
 
+# PASARELAS y AWS no regeneran GENERAL. HERCULES es el Ãºltimo del corte.
+if ($Monitor -eq "PASARELAS" -or $Monitor -eq "AWS") {
+    $args += "--no-finalize"
+}
+
+# PASARELAS y AWS no regeneran GENERAL. HERCULES es el Ãºltimo del corte.
+if ($Monitor -eq "PASARELAS" -or $Monitor -eq "AWS") {
+    $args += "--no-finalize"
+}
+
 if ($Python -eq "py") {
     & py -3.12 @args
     $rc = $LASTEXITCODE

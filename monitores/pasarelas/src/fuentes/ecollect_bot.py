@@ -1,4 +1,5 @@
 import os
+import csv
 import re
 from datetime import datetime
 from pathlib import Path
@@ -584,6 +585,51 @@ def crear_csv_sin_datos(codigo, tipo):
     return target
 
 
+
+def detectar_codigos_en_csv(path, max_filas=120):
+    p = Path(path)
+    codigos = set()
+    for enc in ["utf-8-sig", "utf-8", "latin1", "cp1252"]:
+        try:
+            with p.open("r", encoding=enc, errors="ignore", newline="") as f:
+                reader = csv.reader(f)
+                for i, row in enumerate(reader):
+                    if i >= max_filas:
+                        break
+                    for cell in row:
+                        s = str(cell or "").strip()
+                        if re.fullmatch(r"416\d{2}", s):
+                            codigos.add(s)
+            if codigos:
+                break
+        except Exception:
+            continue
+    return codigos
+
+
+def validar_codigo_csv_descargado(path, codigo_esperado):
+    p = Path(path)
+    if "SIN_DATOS" in p.name.upper():
+        return True
+
+    esperado = str(codigo_esperado).strip()
+    codigos = detectar_codigos_en_csv(p)
+    if not codigos:
+        raise RuntimeError(
+            f"No pude validar el comercio del CSV {p.name}: no encontrÃ© un cÃ³digo 416xx en el contenido."
+        )
+
+    otros = sorted(c for c in codigos if c != esperado)
+    if esperado not in codigos or otros:
+        detectados = ", ".join(sorted(codigos))
+        raise RuntimeError(
+            f"CSV INCORRECTO. Solicitado={esperado}; contenido detectado={detectados}. "
+            "Se descarta y se reintenta la consulta."
+        )
+
+    print(f"  VALIDACIÃ“N CSV OK: solicitado {esperado} / contenido {esperado}")
+    return True
+
 def descargar_reporte_actual(page, codigo, tipo, permitir_sin_datos=False):
     """Descarga obligatoriamente CSV de eCollect.
 
@@ -614,6 +660,14 @@ def descargar_reporte_actual(page, codigo, tipo, permitir_sin_datos=False):
                 d = dlinfo.value
                 target = config.DESCARGAS / f'ecollect_{codigo}_{tipo}_{ts}.csv'
                 d.save_as(str(target))
+                try:
+                    validar_codigo_csv_descargado(target, codigo)
+                except Exception:
+                    try:
+                        target.unlink()
+                    except Exception:
+                        pass
+                    raise
                 print(f'  CSV descargado {codigo} {tipo}: {target.name}')
                 return target
         except Exception as e:
@@ -712,7 +766,7 @@ def descargar_ecollect(fecha_inicio, fecha_fin, items):
 
             print(f'eCollect: descargando {codigo} {tipo}...')
             ultimo = None
-            intentos_item = int(os.getenv('ECOLLECT_REINTENTOS_ITEM', '2'))
+            intentos_item = int(os.getenv('ECOLLECT_REINTENTOS_ITEM', '3'))
             for intento in range(1, intentos_item + 1):
                 try:
                     if intento > 1:
