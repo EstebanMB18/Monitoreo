@@ -28,8 +28,24 @@ def _buscar_columna(cols, *nombres):
 
 
 def _es_pse(valor):
+    """
+    Regla operativa 41621 PayU:
+
+    - Cualquier Payment method que contenga PSE
+      se clasifica como PSE (PAYU).
+
+    Ejemplos:
+      PSE
+      PSE_AVANZA
+      PSE AVANZA
+
+    - Todo lo demás se clasifica como
+      TARJ. CREDITO (PAYU).
+    """
     t = limpiar_texto(valor)
-    return t == "PSE" or t.startswith("PSE ") or " PSE " in f" {t} "
+
+    return "PSE" in t
+
 
 
 def _es_aprobado(valor):
