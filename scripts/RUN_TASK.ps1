@@ -1,7 +1,14 @@
-param(
-    [Parameter(Mandatory=$true)][ValidateSet("PASARELAS","AWS","HERCULES","TODOS")] [string]$Monitor,
-    [ValidateSet("actual","acumulado-hoy","dia-anterior","fecha")] [string]$Modo = "actual",
-    [ValidateSet("09","13","17")] [string]$Corte = "09",
+﻿param(
+    [Parameter(Mandatory=$true)]
+    [ValidateSet("PASARELAS","AWS","HERCULES","TODOS")]
+    [string]$Monitor,
+
+    [ValidateSet("actual","acumulado-hoy","dia-anterior","fecha")]
+    [string]$Modo = "actual",
+
+    [ValidateSet("09","13","17")]
+    [string]$Corte = "09",
+
     [string]$Fecha = "",
     [string]$HoraInicio = "00:00",
     [string]$HoraFin = "23:59",
@@ -27,6 +34,7 @@ if ($Modo -eq "dia-anterior" -and $SoloSiNoEjecutadoHoy) {
     $marker = Join-Path $stateDir "day_before_last_run.txt"
     New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
     $today = Get-Date -Format "yyyy-MM-dd"
+
     if (Test-Path $marker) {
         $last = (Get-Content $marker -Raw).Trim()
         if ($last -eq $today) {
@@ -36,25 +44,51 @@ if ($Modo -eq "dia-anterior" -and $SoloSiNoEjecutadoHoy) {
     }
 }
 
-$args = @("$Root\run.py", "--monitor", $Monitor.ToLower(), "--modo", $Modo, "--corte", $Corte, "--hora-inicio", $HoraInicio, "--hora-fin", $HoraFin)
-if ($Fecha -and $Modo -eq "fecha") { $args += @("--fecha", $Fecha) }
+$argsRun = @(
+    "$Root\run.py",
+    "--monitor", $Monitor.ToLower(),
+    "--modo", $Modo,
+    "--corte", $Corte,
+    "--hora-inicio", $HoraInicio,
+    "--hora-fin", $HoraFin
+)
 
-# PASARELAS y AWS no regeneran GENERAL. HERCULES es el Ãºltimo del corte.
-if ($Monitor -eq "PASARELAS" -or $Monitor -eq "AWS") {
-    $args += "--no-finalize"
+if ($Fecha -and $Modo -eq "fecha") {
+    $argsRun += @("--fecha", $Fecha)
 }
 
-# PASARELAS y AWS no regeneran GENERAL. HERCULES es el Ãºltimo del corte.
+# Sólo Hércules/TODOS publican General.
 if ($Monitor -eq "PASARELAS" -or $Monitor -eq "AWS") {
-    $args += "--no-finalize"
+    $argsRun += "--no-finalize"
 }
 
 if ($Python -eq "py") {
-    & py -3.12 @args
+    & py -3.12 @argsRun
     $rc = $LASTEXITCODE
-} else {
-    & $Python @args
+}
+else {
+    & $Python @argsRun
     $rc = $LASTEXITCODE
+}
+
+# Si Hércules falló antes de publicar, hacer un segundo intento de GENERAL
+# en un proceso independiente.
+if ($Monitor -eq "HERCULES" -and $rc -ne 0) {
+    Write-Host ""
+    Write-Host "HERCULES terminó con código $rc. Intentando generar GENERAL..." -ForegroundColor Yellow
+
+    $finalArgs = @(
+        "$Root\run.py",
+        "--finalize-only",
+        "--corte", $Corte
+    )
+
+    if ($Python -eq "py") {
+        & py -3.12 @finalArgs
+    }
+    else {
+        & $Python @finalArgs
+    }
 }
 
 if ($rc -eq 0 -and $Modo -eq "dia-anterior" -and $SoloSiNoEjecutadoHoy) {
@@ -62,7 +96,7 @@ if ($rc -eq 0 -and $Modo -eq "dia-anterior" -and $SoloSiNoEjecutadoHoy) {
     $stateDir = Join-Path $general "state"
     $marker = Join-Path $stateDir "day_before_last_run.txt"
     New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
-    Set-Content -Path $marker -Value (Get-Date -Format "yyyy-MM-dd") -Encoding UTF8
+    Set-Content $marker (Get-Date -Format "yyyy-MM-dd") -Encoding UTF8
 }
 
 exit $rc

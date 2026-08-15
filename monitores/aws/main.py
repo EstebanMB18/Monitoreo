@@ -12,6 +12,7 @@ BASE = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE / "src"))
 
 from monitoreo_aws.core.alerts import evaluar
+from monitoreo_aws.core.aws import asegurar_sso_profiles
 from monitoreo_aws.core.windows import obtener_ventana
 from monitoreo_aws.demo import datos_demo
 from monitoreo_aws.reports.excel import generar_excel
@@ -61,7 +62,54 @@ def main() -> None:
     ventana = obtener_ventana(args.corte, args.fecha, cfg["app"]["timezone"], args.hora_inicio, args.hora_fin)
     print(f"Monitoreando: {ventana.nombre}\nRango: {ventana.texto}")
 
+    # AWS SSO PRECHECK AUTOMATICO
+    # Si algún profile expiró, AWS CLI abre navegador y luego se revalida STS.
+    if not args.demo:
+        asegurar_sso_profiles(cfg["profiles"], cfg["app"]["region"])
+
     data = datos_demo() if args.demo else recolectar(cfg, ventana)
+
+    # Diagnóstico explícito de recolección AWS.
+    errores_consulta = list(data.get("errores_consulta", []) or [])
+    metricas = dict(data.get("metricas", {}) or {})
+    total_metricas = len(metricas)
+    metricas_validas = sum(v is not None for v in metricas.values())
+    metricas_fallidas = sum(v is None for v in metricas.values())
+
+    print("")
+    print("=" * 68)
+    print("DIAGNOSTICO AWS")
+    print(
+        f"Metricas totales={total_metricas} | "
+        f"validas={metricas_validas} | fallidas={metricas_fallidas}"
+    )
+
+    if errores_consulta:
+        print("ERRORES DE CONSULTA AWS:")
+        for err in errores_consulta:
+            print(f"  - {err}")
+    else:
+        print("Errores de consulta AWS: 0")
+
+    print("=" * 68)
+    print("")
+
+    # Si toda o casi toda la consulta falló, no publicar un dashboard
+    # aparentemente válido lleno de ceros. Se conserva el último bueno.
+    if not args.demo:
+        if total_metricas == 0 or metricas_validas == 0:
+            raise RuntimeError(
+                "AWS NO PUBLICADO: ninguna metrica pudo consultarse. "
+                "Se conserva el ultimo Dashboard_AWS valido."
+            )
+
+        proporcion_fallo = metricas_fallidas / max(total_metricas, 1)
+        if total_metricas >= 3 and proporcion_fallo >= 0.80:
+            raise RuntimeError(
+                "AWS NO PUBLICADO: fallo al menos el 80% de las metricas. "
+                "Revisa GENERAL/logs para ver el error exacto."
+            )
+
     alertas = evaluar(cfg, ventana, data)
     stamp = f"{ventana.fin:%Y-%m-%d}_corte_{ventana.corte}"
 

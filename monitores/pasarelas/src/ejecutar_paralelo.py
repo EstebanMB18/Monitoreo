@@ -1,11 +1,9 @@
-
-from __future__ import annotations
+﻿from __future__ import annotations
 import argparse
 import os
 import shutil
 import subprocess
 import sys
-import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -15,10 +13,8 @@ sys.path.insert(0, str(ROOT))
 from src import config
 from src.main import procesar_archivos, cargar_verticales, rango_hoy
 
-SLOW = {("41605", "JAVA"), ("41610", "RED")}
 
-
-def _fecha_range(fecha: str | None, corte: str, modo: str, hora_inicio: str = "00:00", hora_fin: str = "23:59"):
+def _fecha_range(fecha, corte, modo, hora_inicio="00:00", hora_fin="23:59"):
     if modo == "acumulado-hoy":
         now = datetime.now()
         return now.strftime("%d/%m/%Y 00:00"), now.strftime("%d/%m/%Y %H:%M")
@@ -33,7 +29,7 @@ def _fecha_range(fecha: str | None, corte: str, modo: str, hora_inicio: str = "0
     return rango_hoy(corte)
 
 
-def _copy_state(name: str) -> str:
+def _copy_state(name):
     src = config.STORAGE / "ecollect_session.json"
     dst = config.STORAGE / f"ecollect_session_{name}.json"
     if src.exists():
@@ -42,13 +38,13 @@ def _copy_state(name: str) -> str:
 
 
 def _worker_cmd(items, fi, ff, worker_name, visible):
-    # Use a dedicated process so one slow query never blocks the other workers.
     script = ROOT / "src" / "pasarela_worker.py"
     item_text = ",".join(f"{c}:{t}" for c, t in items)
     env = os.environ.copy()
     env["HEADLESS"] = "false" if visible else "true"
     env["ECOLLECT_STATE_PATH"] = _copy_state(worker_name)
     env["PYTHONPATH"] = str(ROOT)
+    env["PYTHONUNBUFFERED"] = "1"
     cmd = [
         sys.executable, str(script),
         "--items", item_text,
@@ -59,68 +55,104 @@ def _worker_cmd(items, fi, ff, worker_name, visible):
     return cmd, env
 
 
+def ejecutar_ecollect_secuencial(all_items, fi, ff):
+    failed = []
+    print("")
+    print("=" * 68)
+    print("ECOLLECT - MODO SECUENCIAL")
+    print(f"Total consultas: {len(all_items)}")
+    print("Cada comercio termina antes de iniciar el siguiente.")
+    print("=" * 68)
+
+    for i, (codigo, tipo) in enumerate(all_items, 1):
+        name = f"{codigo}_{tipo}"
+        visible = (codigo, tipo) in {
+            ("41605", "JAVA"),
+            ("41610", "RED"),
+        }
+
+        print("")
+        print(f"[ECOLLECT {i}/{len(all_items)}] {codigo} {tipo}")
+        print(f"Navegador visible={visible}")
+
+        cmd, env = _worker_cmd([(codigo, tipo)], fi, ff, name, visible)
+        proc = subprocess.Popen(cmd, cwd=str(ROOT), env=env)
+        rc = proc.wait()
+
+        print(f"[ECOLLECT {i}/{len(all_items)}] finalizado código={rc}")
+
+        if rc != 0:
+            failed.append(name)
+            print(f"ADVERTENCIA: {name} falló. Se continúa con la siguiente consulta.")
+
+    return failed
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--modo", choices=["actual", "acumulado-hoy", "dia-anterior", "fecha"], default="actual")
+    ap.add_argument("--modo", choices=["actual","acumulado-hoy","dia-anterior","fecha"], default="actual")
     ap.add_argument("--fecha")
-    ap.add_argument("--corte", choices=["09", "13", "17"], default="09")
+    ap.add_argument("--corte", choices=["09","13","17"], default="09")
     ap.add_argument("--hora-inicio", default="00:00")
     ap.add_argument("--hora-fin", default="23:59")
     args = ap.parse_args()
 
-    # Clean only temporary downloads before the run. History/monthly is never touched.
     for p in config.DESCARGAS.glob("*"):
         if p.is_file():
-            try: p.unlink()
-            except OSError: pass
+            try:
+                p.unlink()
+            except OSError:
+                pass
 
-    fi, ff = _fecha_range(args.fecha, args.corte, args.modo, args.hora_inicio, args.hora_fin)
-    verticales = cargar_verticales()
-    eco_items = verticales[verticales.origen.eq("ECOLLECT")][["codigo","tipo_reporte"]].drop_duplicates()
-    all_items = [(str(r.codigo), str(r.tipo_reporte).upper()) for r in eco_items.itertuples(index=False)]
-
-    fast_items = [x for x in all_items if x not in SLOW]
-    workers = []
-
-    # PayU starts immediately in its own process.
-    payu = subprocess.Popen(
-        [sys.executable, str(ROOT / "src" / "payu_worker.py"),
-         "--fecha-inicio", fi, "--fecha-fin", ff],
-        cwd=str(ROOT),
-        env={**os.environ, "PYTHONPATH": str(ROOT)},
+    fi, ff = _fecha_range(
+        args.fecha, args.corte, args.modo,
+        args.hora_inicio, args.hora_fin
     )
-    workers.append(("PAYU", payu))
 
-    # Fast eCollect batch continues headless.
-    if fast_items:
-        cmd, env = _worker_cmd(fast_items, fi, ff, "fast", visible=False)
-        workers.append(("ECOLLECT_RAPIDO", subprocess.Popen(cmd, cwd=str(ROOT), env=env)))
+    verticales = cargar_verticales()
+    eco_items = (
+        verticales[verticales.origen.eq("ECOLLECT")]
+        [["codigo","tipo_reporte"]]
+        .drop_duplicates()
+    )
+    all_items = [
+        (str(r.codigo), str(r.tipo_reporte).upper())
+        for r in eco_items.itertuples(index=False)
+    ]
 
-    # Slow workers get their own visible browser and independent process.
-    for codigo, tipo in sorted(SLOW):
-        if (codigo, tipo) in all_items:
-            name = f"{codigo}_{tipo}"
-            cmd, env = _worker_cmd([(codigo, tipo)], fi, ff, name, visible=True)
-            workers.append((name, subprocess.Popen(cmd, cwd=str(ROOT), env=env)))
+    # PayU sí puede trabajar simultáneamente.
+    payu = subprocess.Popen(
+        [
+            sys.executable,
+            str(ROOT / "src" / "payu_worker.py"),
+            "--fecha-inicio", fi,
+            "--fecha-fin", ff,
+        ],
+        cwd=str(ROOT),
+        env={**os.environ, "PYTHONPATH": str(ROOT), "PYTHONUNBUFFERED": "1"},
+    )
 
-    print("\nTrabajos iniciados en paralelo:")
-    for name, proc in workers:
-        print(f"  - {name}: PID {proc.pid}")
-    print("Los lentos 41605 JAVA y 41610 RED quedan visibles sin frenar PayU ni el resto de eCollect.\n")
+    print(f"PAYU iniciado en paralelo. PID={payu.pid}")
 
-    failed = []
-    for name, proc in workers:
-        rc = proc.wait()
-        print(f"{name}: finalizado con código {rc}")
-        if rc != 0:
-            failed.append(name)
+    # eCollect NO se paraleliza por el estado de comercio compartido.
+    failed = ejecutar_ecollect_secuencial(all_items, fi, ff)
 
-    # Build one consolidated result from whatever was downloaded successfully.
+    payu_rc = payu.wait()
+    print(f"PAYU finalizado código={payu_rc}")
+    if payu_rc != 0:
+        failed.append("PAYU")
+
+    # Consolidar únicamente cuando TODO terminó.
     df, html, excel = procesar_archivos(corte=args.corte)
-    print(f"\nConsolidado Pasarelas: {html}\nExcel: {excel}")
+
+    print("")
+    print(f"Consolidado Pasarelas: {html}")
+    print(f"Excel: {excel}")
+
     if failed:
-        print("ADVERTENCIA: workers con error: " + ", ".join(failed))
-        # Do not hide partial data; caller can see warning while other results remain usable.
+        print("ADVERTENCIA - procesos con error:")
+        for x in failed:
+            print(f"  - {x}")
 
 
 if __name__ == "__main__":

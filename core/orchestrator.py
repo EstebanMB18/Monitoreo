@@ -31,26 +31,91 @@ def output_root():
 def _run(name, cmd, cwd, modo, corte, target_date=None, live_cb=None):
     root = output_root()
     start = time.time()
+
+    logs_dir = root / "GENERAL" / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_path = logs_dir / f"{name}_{stamp}_{modo}_corte_{corte}.log"
+
     if live_cb:
         live_cb(name, "EJECUTANDO", "Iniciando...")
-    proc = subprocess.Popen(cmd, cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
-    lines = []
-    assert proc.stdout is not None
-    for line in proc.stdout:
-        lines.append(line.rstrip())
-        if live_cb:
-            live_cb(name, "EJECUTANDO", line.rstrip())
-    rc = proc.wait()
-    duration = round(time.time() - start, 1)
-    estado = "OK" if rc == 0 else "ERROR"
-    detail = (lines[-1] if lines else f"Código {rc}")[:250]
+
+    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+
+    with log_path.open("w", encoding="utf-8", errors="replace") as log:
+        log.write(f"MONITOR={name}\n")
+        log.write(f"INICIO={datetime.now().isoformat()}\n")
+        log.write(f"MODO={modo}\n")
+        log.write(f"CORTE={corte}\n")
+        log.write(f"CWD={cwd}\n")
+        log.write("COMANDO=" + " ".join(str(x) for x in cmd) + "\n")
+        log.write("=" * 90 + "\n")
+        log.flush()
+
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                cwd=str(cwd),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=env,
+            )
+            lines = []
+            assert proc.stdout is not None
+
+            for line in proc.stdout:
+                clean = line.rstrip("\r\n")
+                lines.append(clean)
+                print(clean, flush=True)
+                log.write(clean + "\n")
+                log.flush()
+                if live_cb:
+                    live_cb(name, "EJECUTANDO", clean)
+
+            rc = proc.wait()
+
+        except Exception as exc:
+            rc = 1
+            lines = [f"ERROR ORQUESTADOR: {type(exc).__name__}: {exc}"]
+            log.write(lines[-1] + "\n")
+            log.flush()
+
+        duration = round(time.time() - start, 1)
+        estado = "OK" if rc == 0 else "ERROR"
+        detail = (lines[-1] if lines else f"Codigo {rc}")[:250]
+
+        log.write("=" * 90 + "\n")
+        log.write(f"FIN={datetime.now().isoformat()}\n")
+        log.write(f"RC={rc}\n")
+        log.write(f"ESTADO={estado}\n")
+        log.write(f"DURACION_SEG={duration}\n")
+
     fecha = target_date or datetime.now().strftime("%Y-%m-%d")
-    append_event(root, {"fecha": fecha, "corte": corte, "monitor": name, "modo": modo, "estado": estado, "duracion_seg": duration, "detalle": detail, "ruta_reporte": ""}, accumulate_month=(modo == "dia-anterior"))
+
+    append_event(
+        root,
+        {
+            "fecha": fecha,
+            "corte": corte,
+            "monitor": name,
+            "modo": modo,
+            "estado": estado,
+            "duracion_seg": duration,
+            "detalle": detail,
+            "ruta_reporte": str(log_path),
+        },
+        accumulate_month=(modo == "dia-anterior"),
+    )
+
+    print(f"[LOG {name}] {log_path}", flush=True)
+
     if live_cb:
         live_cb(name, estado, detail)
+
     return rc
-
-
 
 def _ensure_session(name, live_cb=None):
     """
